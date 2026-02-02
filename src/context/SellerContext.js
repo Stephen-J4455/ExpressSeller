@@ -151,14 +151,14 @@ export const SellerProvider = ({ children }) => {
           supabase
             .from("express_products")
             .select(
-              "id,title,price,category,status,thumbnail,thumbnails,badges,description,discount,sizes,quantity,sold_count,rating,created_at"
+              "id,title,price,category,status,thumbnail,thumbnails,badges,description,discount,sizes,quantity,sold_count,rating,created_at",
             )
             .eq("seller_id", seller.id)
             .order("created_at", { ascending: false }),
           supabase
             .from("express_orders")
             .select(
-              "id,order_number,status,total,customer,shipping_address,eta,payment_status,created_at,items:express_order_items(id,title,quantity,price,thumbnail)"
+              "id,order_number,status,total,customer,shipping_address,eta,payment_status,created_at,items:express_order_items(id,title,quantity,price,thumbnail)",
             )
             .eq("seller_id", seller.id)
             .order("created_at", { ascending: false })
@@ -166,7 +166,7 @@ export const SellerProvider = ({ children }) => {
           supabase
             .from("express_sellers")
             .select(
-              "id,name,email,phone,location,rating,fulfillment_speed,weekly_target,avatar,is_verified,created_at,badges"
+              "id,name,email,phone,location,rating,fulfillment_speed,weekly_target,avatar,is_verified,created_at,badges",
             )
             .eq("id", seller.id)
             .single(),
@@ -178,10 +178,28 @@ export const SellerProvider = ({ children }) => {
       if (profileRes.error && profileRes.error.code !== "PGRST116")
         throw profileRes.error;
 
-      const resolvedCategories =
-        categoriesRes.data && categoriesRes.data.length > 0
-          ? categoriesRes.data
-          : DEFAULT_CATEGORIES;
+      let resolvedCategories = categoriesRes.data || [];
+
+      // If no categories in DB, seed the default ones
+      if (resolvedCategories.length === 0) {
+        const { data: insertedCategories, error: insertError } = await supabase
+          .from("express_categories")
+          .insert(
+            DEFAULT_CATEGORIES.map((cat) => ({
+              name: cat.name,
+              icon: cat.icon,
+              color: cat.color,
+            })),
+          )
+          .select("id,name,icon,color");
+
+        if (!insertError && insertedCategories) {
+          resolvedCategories = insertedCategories;
+        } else {
+          // Fallback to defaults if insert fails
+          resolvedCategories = DEFAULT_CATEGORIES;
+        }
+      }
 
       setCategories(resolvedCategories);
       setProducts(productsRes.data || []);
@@ -228,18 +246,18 @@ export const SellerProvider = ({ children }) => {
             // Show notification
             Alert.alert(
               "New Order!",
-              `Order #${payload.new.order_number} received`
+              `Order #${payload.new.order_number} received`,
             );
           } else if (payload.eventType === "UPDATE") {
             setOrders((prev) =>
               prev.map((order) =>
                 order.id === payload.new.id
                   ? { ...order, ...payload.new }
-                  : order
-              )
+                  : order,
+              ),
             );
           }
-        }
+        },
       )
       .subscribe();
 
@@ -261,8 +279,8 @@ export const SellerProvider = ({ children }) => {
               prev.map((product) =>
                 product.id === payload.new.id
                   ? { ...product, ...payload.new }
-                  : product
-              )
+                  : product,
+              ),
             );
             // Notify on status change
             if (payload.old.status !== payload.new.status) {
@@ -275,12 +293,12 @@ export const SellerProvider = ({ children }) => {
               if (msg) {
                 Alert.alert(
                   "Product Update",
-                  `"${payload.new.title}" has been ${msg}`
+                  `"${payload.new.title}" has been ${msg}`,
                 );
               }
             }
           }
-        }
+        },
       )
       .subscribe();
 
@@ -296,7 +314,7 @@ export const SellerProvider = ({ children }) => {
 
   const metrics = useMemo(() => {
     const pendingProducts = products.filter(
-      (p) => p.status === "pending"
+      (p) => p.status === "pending",
     ).length;
     const activeProducts = products.filter((p) => p.status === "active").length;
     const draftProducts = products.filter((p) => p.status === "draft").length;
@@ -304,7 +322,7 @@ export const SellerProvider = ({ children }) => {
       .filter((o) => o.payment_status === "success")
       .reduce((sum, order) => sum + Number(order.total || 0), 0);
     const inProgressOrders = orders.filter((o) =>
-      ["processing", "packed"].includes(o.status)
+      ["processing", "packed"].includes(o.status),
     ).length;
     const totalSold = products.reduce((sum, p) => sum + (p.sold_count || 0), 0);
     return {
@@ -327,7 +345,20 @@ export const SellerProvider = ({ children }) => {
       description,
       discount,
       sizes,
+      colors,
       quantity,
+      sku,
+      weight,
+      weight_unit,
+      barcode,
+      vendor,
+      slug,
+      compare_at_price,
+      cost_price,
+      tags,
+      track_inventory,
+      allow_backorder,
+      specifications,
     }) => {
       if (!supabase) {
         Alert.alert("Error", "Not authenticated as seller");
@@ -339,7 +370,7 @@ export const SellerProvider = ({ children }) => {
       if (!ensuredSellerId) {
         Alert.alert(
           "Seller profile missing",
-          "We could not find your seller account. Please re-login or contact support."
+          "We could not find your seller account. Please re-login or contact support.",
         );
         return;
       }
@@ -352,12 +383,15 @@ export const SellerProvider = ({ children }) => {
         return;
       }
 
+      const categoryObj = categories.find((c) => c.name === category);
+
       const payload = {
         seller_id: ensuredSellerId,
-        vendor: profile?.name || "Seller",
+        vendor: vendor || profile?.name || "Seller",
         title,
         price: numericPrice,
         category,
+        category_id: categoryObj?.id || null,
         thumbnail: thumbnails?.[0] || null,
         thumbnails: thumbnails?.length ? thumbnails : null,
         status: "pending",
@@ -365,7 +399,19 @@ export const SellerProvider = ({ children }) => {
         description: description || null,
         discount: discount || 0,
         sizes: sizes?.length ? sizes : null,
+        colors: colors?.length ? colors : null,
         quantity: quantity || 0,
+        sku: sku || null,
+        weight: weight || null,
+        weight_unit: weight_unit || "kg",
+        barcode: barcode || null,
+        slug: slug || null,
+        compare_at_price: compare_at_price || null,
+        cost_price: cost_price || null,
+        tags: tags?.length ? tags : null,
+        track_inventory: track_inventory !== false,
+        allow_backorder: allow_backorder === true,
+        specifications: specifications || null,
       };
 
       const { data, error: insertError } = await supabase
@@ -382,7 +428,7 @@ export const SellerProvider = ({ children }) => {
       setProducts((prev) => [data, ...prev]);
       return data;
     },
-    [sellerId, profile, getSellerId]
+    [sellerId, profile, getSellerId, categories],
   );
 
   const updateProductStatus = useCallback(async (productId, status) => {
@@ -396,7 +442,7 @@ export const SellerProvider = ({ children }) => {
       return;
     }
     setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, status } : p))
+      prev.map((p) => (p.id === productId ? { ...p, status } : p)),
     );
   }, []);
 
@@ -445,7 +491,7 @@ export const SellerProvider = ({ children }) => {
       return;
     }
     setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, ...updates } : o))
+      prev.map((o) => (o.id === orderId ? { ...o, ...updates } : o)),
     );
   }, []);
 
@@ -474,7 +520,26 @@ export const SellerProvider = ({ children }) => {
       }
       Alert.alert("Success", "Support ticket created");
     },
-    [sellerId, profile]
+    [sellerId, profile],
+  );
+
+  const updateProfile = useCallback(
+    async (updates) => {
+      if (!supabase || !sellerId) return;
+      const { data, error: updateError } = await supabase
+        .from("express_sellers")
+        .update(updates)
+        .eq("id", sellerId)
+        .select()
+        .single();
+      if (updateError) {
+        Alert.alert("Unable to update profile", updateError.message);
+        return;
+      }
+      setProfile(data);
+      Alert.alert("Success", "Profile updated");
+    },
+    [sellerId],
   );
 
   const value = {
@@ -494,6 +559,7 @@ export const SellerProvider = ({ children }) => {
     updateProductStatus,
     advanceOrderStatus,
     createSupportTicket,
+    updateProfile,
     logout,
   };
 

@@ -66,6 +66,9 @@ export const CatalogScreen = () => {
   const [tags, setTags] = useState("");
   const [trackInventory, setTrackInventory] = useState(true);
   const [allowBackorder, setAllowBackorder] = useState(false);
+  const [weightUnit, setWeightUnit] = useState("kg");
+  const [slug, setSlug] = useState("");
+  const [specifications, setSpecifications] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [actionSheetVisible, setActionSheetVisible] = useState(false);
@@ -129,17 +132,17 @@ export const CatalogScreen = () => {
         (p) =>
           p.title.toLowerCase().includes(query) ||
           p.category?.toLowerCase().includes(query) ||
-          p.description?.toLowerCase().includes(query)
+          p.description?.toLowerCase().includes(query),
       );
     }
 
     if (sortBy === "price-desc") {
       filtered = [...filtered].sort(
-        (a, b) => Number(b.price || 0) - Number(a.price || 0)
+        (a, b) => Number(b.price || 0) - Number(a.price || 0),
       );
     } else if (sortBy === "price-asc") {
       filtered = [...filtered].sort(
-        (a, b) => Number(a.price || 0) - Number(b.price || 0)
+        (a, b) => Number(a.price || 0) - Number(b.price || 0),
       );
     } else if (sortBy === "alpha") {
       filtered = [...filtered].sort((a, b) => a.title.localeCompare(b.title));
@@ -174,8 +177,18 @@ export const CatalogScreen = () => {
     setSelectedSizes(product.sizes || []);
     setSelectedBadges(product.badges || []);
     setSelectedColors(product.colors || []);
+    setWeightUnit(product.weight_unit || "kg");
+    setSlug(product.slug || "");
     setTrackInventory(product.track_inventory ?? true);
     setAllowBackorder(product.allow_backorder ?? false);
+    if (product.specifications && typeof product.specifications === "object") {
+      const specsArray = Object.entries(product.specifications).map(
+        ([key, value]) => ({ key, value }),
+      );
+      setSpecifications(specsArray);
+    } else {
+      setSpecifications([]);
+    }
     setImageUris([]);
     setModalVisible(true);
   };
@@ -273,7 +286,7 @@ export const CatalogScreen = () => {
       case "toggle_status":
         updateProductStatus(
           selectedProduct.id,
-          selectedProduct.status === "active" ? "draft" : "pending"
+          selectedProduct.status === "active" ? "draft" : "pending",
         );
         break;
     }
@@ -283,7 +296,7 @@ export const CatalogScreen = () => {
     if (!title || !price || !category || !quantity) {
       toast.warning(
         "Missing info",
-        "Please fill title, price, category, and quantity."
+        "Please fill title, price, category, and quantity.",
       );
       return;
     }
@@ -293,6 +306,14 @@ export const CatalogScreen = () => {
       if (imageUris.length > 0) {
         imageUrls = await uploadImages(imageUris);
       }
+
+      // Convert specifications array to object
+      const specificationsObj = {};
+      specifications.forEach((spec) => {
+        if (spec.key && spec.value) {
+          specificationsObj[spec.key] = spec.value;
+        }
+      });
 
       const productData = {
         title,
@@ -306,8 +327,10 @@ export const CatalogScreen = () => {
         quantity: quantity ? parseInt(quantity) : 0,
         sku: sku || null,
         weight: weight ? parseFloat(weight) : null,
+        weight_unit: weightUnit || "kg",
         barcode: barcode || null,
         vendor: vendor || null,
+        slug: slug || null,
         compare_at_price: compareAtPrice ? parseFloat(compareAtPrice) : null,
         cost_price: costPrice ? parseFloat(costPrice) : null,
         tags: tags
@@ -318,6 +341,8 @@ export const CatalogScreen = () => {
           : [],
         track_inventory: trackInventory,
         allow_backorder: allowBackorder,
+        specifications:
+          Object.keys(specificationsObj).length > 0 ? specificationsObj : null,
       };
 
       if (imageUrls.length > 0) {
@@ -351,8 +376,11 @@ export const CatalogScreen = () => {
       setCompareAtPrice("");
       setCostPrice("");
       setTags("");
+      setWeightUnit("kg");
+      setSlug("");
       setTrackInventory(true);
       setAllowBackorder(false);
+      setSpecifications([]);
       setEditingProduct(null);
       setModalVisible(false);
     } catch (error) {
@@ -480,10 +508,10 @@ export const CatalogScreen = () => {
                 {key === "recent"
                   ? "Recent"
                   : key === "alpha"
-                  ? "A-Z"
-                  : key === "price-desc"
-                  ? "Price ↓"
-                  : "Price ↑"}
+                    ? "A-Z"
+                    : key === "price-desc"
+                      ? "Price ↓"
+                      : "Price ↑"}
               </Text>
             </Pressable>
           ))}
@@ -740,7 +768,7 @@ export const CatalogScreen = () => {
                         setSelectedBadges((prev) =>
                           prev.includes(badge.id)
                             ? prev.filter((b) => b !== badge.id)
-                            : [...prev, badge.id]
+                            : [...prev, badge.id],
                         );
                       }}
                     >
@@ -791,7 +819,7 @@ export const CatalogScreen = () => {
                         style={styles.removeImageButton}
                         onPress={() => {
                           setImageUris((prev) =>
-                            prev.filter((_, i) => i !== index)
+                            prev.filter((_, i) => i !== index),
                           );
                         }}
                       >
@@ -831,7 +859,7 @@ export const CatalogScreen = () => {
                       setSelectedSizes((prev) =>
                         prev.includes(size)
                           ? prev.filter((s) => s !== size)
-                          : [...prev, size]
+                          : [...prev, size],
                       );
                     }}
                   >
@@ -862,7 +890,7 @@ export const CatalogScreen = () => {
                         setSelectedColors((prev) =>
                           prev.includes(color.name)
                             ? prev.filter((c) => c !== color.name)
-                            : [...prev, color.name]
+                            : [...prev, color.name],
                         );
                       }}
                     >
@@ -907,6 +935,137 @@ export const CatalogScreen = () => {
                   value={tags}
                   onChangeText={setTags}
                 />
+              </View>
+
+              <Text style={styles.label}>Product Slug</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons
+                  name="link-outline"
+                  size={20}
+                  color={colors.muted}
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  placeholder="URL-friendly name (optional)"
+                  style={styles.input}
+                  value={slug}
+                  onChangeText={setSlug}
+                />
+              </View>
+
+              <Text style={styles.label}>Weight Details</Text>
+              <View style={styles.row}>
+                <View style={styles.halfInput}>
+                  <Text style={styles.hint}>Weight</Text>
+                  <View style={styles.inputContainer}>
+                    <Ionicons
+                      name="scale-outline"
+                      size={20}
+                      color={colors.muted}
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="e.g., 2.5"
+                      style={styles.input}
+                      value={weight}
+                      onChangeText={setWeight}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+                <View style={styles.halfInput}>
+                  <Text style={styles.hint}>Unit</Text>
+                  <View style={styles.inputContainer}>
+                    <Ionicons
+                      name="menu-outline"
+                      size={20}
+                      color={colors.muted}
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="kg, g, lb"
+                      style={styles.input}
+                      value={weightUnit}
+                      onChangeText={setWeightUnit}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.label}>Specifications</Text>
+              <View style={{ gap: 12 }}>
+                {specifications.map((spec, index) => (
+                  <View key={index} style={styles.row}>
+                    <View style={styles.halfInput}>
+                      <Text style={styles.hint}>Specification Name</Text>
+                      <View style={styles.inputContainer}>
+                        <Ionicons
+                          name="tag-outline"
+                          size={20}
+                          color={colors.muted}
+                          style={styles.inputIcon}
+                        />
+                        <TextInput
+                          placeholder="e.g., Material"
+                          style={styles.input}
+                          value={spec.key}
+                          onChangeText={(text) => {
+                            const updated = [...specifications];
+                            updated[index].key = text;
+                            setSpecifications(updated);
+                          }}
+                        />
+                      </View>
+                    </View>
+                    <View style={styles.halfInput}>
+                      <Text style={styles.hint}>Value</Text>
+                      <View style={styles.inputContainer}>
+                        <Ionicons
+                          name="checkmark-outline"
+                          size={20}
+                          color={colors.muted}
+                          style={styles.inputIcon}
+                        />
+                        <TextInput
+                          placeholder="e.g., Cotton"
+                          style={styles.input}
+                          value={spec.value}
+                          onChangeText={(text) => {
+                            const updated = [...specifications];
+                            updated[index].value = text;
+                            setSpecifications(updated);
+                          }}
+                        />
+                      </View>
+                    </View>
+                    <Pressable
+                      style={styles.removeButton}
+                      onPress={() => {
+                        setSpecifications(
+                          specifications.filter((_, i) => i !== index),
+                        );
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={24} color="#EF4444" />
+                    </Pressable>
+                  </View>
+                ))}
+                <Pressable
+                  style={styles.addButton}
+                  onPress={() => {
+                    setSpecifications([
+                      ...specifications,
+                      { key: "", value: "" },
+                    ]);
+                  }}
+                >
+                  <Ionicons
+                    name="add-circle-outline"
+                    size={20}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.addButtonText}>Add Specification</Text>
+                </Pressable>
               </View>
 
               <Text style={styles.label}>Inventory Settings</Text>
@@ -1737,6 +1896,14 @@ const styles = StyleSheet.create({
     marginTop: 6,
     gap: 12,
   },
+  row: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 12,
+  },
+  halfInput: {
+    flex: 1,
+  },
   discountButton: {
     backgroundColor: colors.light,
     borderRadius: 20,
@@ -2027,5 +2194,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: colors.primary,
+  },
+  addButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F0F5FF",
+    borderRadius: 12,
+    paddingVertical: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderStyle: "dashed",
+  },
+  addButtonText: {
+    color: colors.primary,
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  removeButton: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingBottom: 12,
   },
 });

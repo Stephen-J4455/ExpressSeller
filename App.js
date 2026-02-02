@@ -18,7 +18,8 @@ import { ToastProvider } from "./src/context/ToastContext";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { CatalogScreen } from "./src/screens/CatalogScreen";
 import { OrdersScreen } from "./src/screens/OrdersScreen";
-import { ProfileScreen } from "./src/screens/ProfileScreen";
+import { SellerChatsScreen } from "./src/screens/SellerChatsScreen";
+import { SellerChatScreen } from "./src/screens/SellerChatScreen";
 import SellerLoginScreen from "./src/screens/SellerLoginScreen";
 import ForgotPasswordScreen from "./src/screens/ForgotPasswordScreen";
 import { colors } from "./src/theme/colors";
@@ -43,6 +44,7 @@ const icons = {
   Overview: "speedometer",
   Catalog: "pricetags",
   Orders: "cube",
+  Chats: "chatbubble",
   Profile: "person",
 };
 
@@ -59,7 +61,14 @@ const MissingConfig = () => (
   </View>
 );
 
-const SellerTabs = ({ onLogout }) => {
+const SellerStack = ({ onLogout }) => (
+  <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Screen name="MainTabs">
+      {props => <SellerTabs {...props} onLogout={onLogout} />}
+    </Stack.Screen>
+    <Stack.Screen name="SellerChat" component={SellerChatScreen} />
+  </Stack.Navigator>
+);
   const { metrics } = useSeller();
   const orderBadge =
     metrics.inProgressOrders > 0
@@ -77,6 +86,7 @@ const SellerTabs = ({ onLogout }) => {
         tabBarInactiveTintColor: colors.muted,
         tabBarLabelStyle: styles.tabLabel,
         tabBarStyle: styles.tabBar,
+        tabBarItemStyle: styles.tabBarItem,
         tabBarHideOnKeyboard: true,
         tabBarIcon: ({ color, size }) => (
           <Ionicons
@@ -92,6 +102,7 @@ const SellerTabs = ({ onLogout }) => {
       <Tab.Screen name="Overview" component={DashboardScreen} />
       <Tab.Screen name="Catalog" component={CatalogScreen} />
       <Tab.Screen name="Orders" component={OrdersScreen} />
+      <Tab.Screen name="Chats" component={SellerChatsScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
@@ -121,7 +132,7 @@ export default function App() {
         await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
         await AsyncStorage.setItem(
           AUTH_ROLE_KEY,
-          normalizedRole ? normalizedRole : ""
+          normalizedRole ? normalizedRole : "",
         );
       } else {
         await AsyncStorage.removeItem(AUTH_USER_KEY);
@@ -234,7 +245,7 @@ export default function App() {
             <StatusBar style="dark" />
             {isSeller ? (
               <View style={styles.appBackground}>
-                <SellerTabs onLogout={handleLogout} />
+                <SellerStack onLogout={handleLogout} />
               </View>
             ) : isOtherRole ? (
               <View style={styles.scene}>
@@ -291,12 +302,18 @@ const styles = StyleSheet.create({
     elevation: 12,
     position: "absolute",
     bottom: 12,
-    justifyContent: "center",
+    justifyContent: "space-between",
     alignItems: "center",
   },
   tabLabel: {
     fontWeight: "700",
     fontSize: 12,
+  },
+  tabBarItem: {
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
   },
   badge: {
     backgroundColor: colors.warning,
