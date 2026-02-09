@@ -5,7 +5,10 @@ import { StatusPill } from "./StatusPill";
 
 export const ProductCard = ({ product, onPress }) => {
   return (
-    <Pressable style={styles.card} onPress={() => onPress?.(product)}>
+    <Pressable
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      onPress={() => onPress?.(product)}
+    >
       {product.thumbnails?.[0] && (
         <Image source={{ uri: product.thumbnails[0] }} style={styles.image} />
       )}
@@ -15,56 +18,43 @@ export const ProductCard = ({ product, onPress }) => {
             <Text style={styles.title} numberOfLines={2}>
               {product.title}
             </Text>
-            <Text style={styles.meta}>{product.category || "No category"}</Text>
+            <View style={styles.metaRow}>
+              <Ionicons name="folder-outline" size={12} color={colors.muted} />
+              <Text style={styles.metaText}>{product.category || "No category"}</Text>
+            </View>
           </View>
           <StatusPill value={product.status} />
         </View>
 
         <View style={styles.details}>
-          <View style={styles.detailItem}>
-            <Ionicons name="pricetag" size={14} color={colors.muted} />
-            <Text style={styles.detailText}>
-              ${Number(product.price || 0).toFixed(2)}
+          <View style={styles.priceRow}>
+            <Text style={styles.currency}>GH₵</Text>
+            <Text style={styles.priceValue}>
+              {Number(product.price || 0).toLocaleString()}
             </Text>
           </View>
-          <View style={styles.detailItem}>
-            <Ionicons name="cube" size={14} color={colors.muted} />
-            <Text style={styles.detailText}>
-              Stock: {product.quantity || 0}
-            </Text>
+          <View style={styles.metaRow}>
+            <Ionicons name="cube-outline" size={12} color={colors.muted} />
+            <Text style={styles.metaText}>Stock: {product.quantity || 0}</Text>
           </View>
-          {product.sku && (
-            <View style={styles.detailItem}>
-              <Ionicons name="barcode" size={14} color={colors.muted} />
-              <Text style={styles.detailText} numberOfLines={1}>
-                {product.sku}
-              </Text>
-            </View>
-          )}
         </View>
 
         <View style={styles.footer}>
-          {product.badges && product.badges.length > 0 && (
+          {product.badges && product.badges.length > 0 ? (
             <View style={styles.badges}>
               {product.badges.slice(0, 2).map((badge) => (
                 <View key={badge} style={styles.badge}>
                   <Text style={styles.badgeText}>{badge}</Text>
                 </View>
               ))}
-              {product.badges.length > 2 && (
-                <Text style={styles.moreBadges}>
-                  +{product.badges.length - 2}
-                </Text>
-              )}
             </View>
+          ) : (
+             <View style={{ flex: 1 }} />
           )}
-          <Pressable
-            style={styles.viewButton}
-            onPress={() => onPress?.(product)}
-          >
+          <View style={styles.viewButton}>
             <Ionicons name="eye-outline" size={16} color={colors.primary} />
             <Text style={styles.viewButtonText}>View</Text>
-          </Pressable>
+          </View>
         </View>
       </View>
     </Pressable>
@@ -74,23 +64,28 @@ export const ProductCard = ({ product, onPress }) => {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#E4E8F0",
+    borderColor: "#F1F5F9",
     overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowColor: colors.dark,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.03,
+    shadowRadius: 10,
     elevation: 2,
+    marginBottom: 16,
+  },
+  cardPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
   image: {
     width: "100%",
     height: 180,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F8FAFC",
   },
   content: {
-    padding: 14,
+    padding: 16,
   },
   header: {
     flexDirection: "row",
@@ -100,44 +95,57 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "800",
     color: colors.dark,
     marginBottom: 4,
   },
-  meta: {
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  metaText: {
+    fontSize: 12,
     color: colors.muted,
-    fontSize: 13,
+    fontWeight: "500",
   },
   details: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    marginBottom: 12,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
   },
-  detailItem: {
+  priceRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
   },
-  detailText: {
-    fontSize: 13,
-    color: colors.dark,
-    fontWeight: "500",
+  currency: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.primary,
+    marginTop: 2,
+  },
+  priceValue: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: colors.primary,
   },
   footer: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
   },
   badges: {
     flexDirection: "row",
     gap: 6,
     flex: 1,
-    flexWrap: "wrap",
   },
   badge: {
-    backgroundColor: colors.light,
+    backgroundColor: colors.primaryLight,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -147,23 +155,18 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: "600",
   },
-  moreBadges: {
-    fontSize: 11,
-    color: colors.muted,
-    fontWeight: "600",
-  },
   viewButton: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: colors.light,
+    borderRadius: 10,
+    backgroundColor: colors.primaryLight,
   },
   viewButtonText: {
     fontSize: 13,
     color: colors.primary,
-    fontWeight: "600",
+    fontWeight: "700",
   },
 });

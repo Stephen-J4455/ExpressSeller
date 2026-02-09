@@ -12,7 +12,9 @@ import {
   Image,
   Modal,
   Dimensions,
+  TouchableOpacity,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useSeller } from "../context/SellerContext";
@@ -32,6 +34,7 @@ const filters = [
 ];
 
 export const CatalogScreen = () => {
+  const insets = useSafeAreaInsets();
   const {
     products,
     categories,
@@ -335,9 +338,9 @@ export const CatalogScreen = () => {
         cost_price: costPrice ? parseFloat(costPrice) : null,
         tags: tags
           ? tags
-              .split(",")
-              .map((t) => t.trim())
-              .filter((t) => t)
+            .split(",")
+            .map((t) => t.trim())
+            .filter((t) => t)
           : [],
         track_inventory: trackInventory,
         allow_backorder: allowBackorder,
@@ -392,21 +395,27 @@ export const CatalogScreen = () => {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ paddingBottom: 100 }}
+      contentContainerStyle={styles.contentContainer}
       refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={refresh} />
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={refresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
       }
     >
       <SectionHeader
-        title="Catalog"
-        subtitle={`${products.length} products`}
+        title="Store Catalog"
+        subtitle={`${products.length} Products`}
         action={
-          <Pressable
+          <TouchableOpacity
             style={styles.primaryButton}
             onPress={() => setModalVisible(true)}
           >
-            <Text style={styles.primaryButtonText}>New product</Text>
-          </Pressable>
+            <Ionicons name="add-circle-outline" size={20} color="#fff" />
+            <Text style={styles.primaryButtonText}>Add New</Text>
+          </TouchableOpacity>
         }
       />
 
@@ -527,7 +536,7 @@ export const CatalogScreen = () => {
       >
         <ScrollView style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
+            <View style={[styles.modalHeader, { paddingTop: insets.top + 12 }]}>
               <Pressable
                 onPress={() => {
                   setModalVisible(false);
@@ -799,9 +808,8 @@ export const CatalogScreen = () => {
                   <Ionicons name="image" size={40} color={colors.primary} />
                   <Text style={styles.imagePickerText}>
                     {imageUris.length > 0
-                      ? `${imageUris.length} image${
-                          imageUris.length > 1 ? "s" : ""
-                        } selected`
+                      ? `${imageUris.length} image${imageUris.length > 1 ? "s" : ""
+                      } selected`
                       : "Tap to select images"}
                   </Text>
                 </View>
@@ -1687,6 +1695,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
+    paddingHorizontal: 16,
   },
   modalTitle: {
     fontSize: 24,

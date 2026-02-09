@@ -15,18 +15,37 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "./supabase";
 import { SellerProvider, useSeller } from "./src/context/SellerContext";
 import { ToastProvider } from "./src/context/ToastContext";
+import { NotificationProvider } from "./src/context/NotificationContext";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { CatalogScreen } from "./src/screens/CatalogScreen";
 import { OrdersScreen } from "./src/screens/OrdersScreen";
+import { OrderDetailScreen } from "./src/screens/OrderDetailScreen";
 import { SellerChatsScreen } from "./src/screens/SellerChatsScreen";
 import { SellerChatScreen } from "./src/screens/SellerChatScreen";
+import { StatusCreatorScreen } from "./src/screens/StatusCreatorScreen";
 import SellerLoginScreen from "./src/screens/SellerLoginScreen";
 import ForgotPasswordScreen from "./src/screens/ForgotPasswordScreen";
 import { colors } from "./src/theme/colors";
+import { ProfileScreen } from "./src/screens/ProfileScreen";
+import { LoadingAnimation } from "./src/components/LoadingAnimation";
 import React, { useState, useEffect } from "react";
+
+import PasswordResetScreen from "./src/screens/PasswordResetScreen";
+import * as Linking from "expo-linking";
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
+
+const linking = {
+  prefixes: [Linking.createURL("/"), "expressseller://"],
+  config: {
+    screens: {
+      Login: "login",
+      ForgotPassword: "forgot-password",
+      PasswordReset: "reset-password",
+    },
+  },
+};
 
 const navTheme = {
   ...DefaultTheme,
@@ -45,6 +64,7 @@ const icons = {
   Catalog: "pricetags",
   Orders: "cube",
   Chats: "chatbubble",
+  Feedback: "star",
   Profile: "person",
 };
 
@@ -67,8 +87,11 @@ const SellerStack = ({ onLogout }) => (
       {props => <SellerTabs {...props} onLogout={onLogout} />}
     </Stack.Screen>
     <Stack.Screen name="SellerChat" component={SellerChatScreen} />
+    <Stack.Screen name="StatusCreator" component={StatusCreatorScreen} />
+    <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
   </Stack.Navigator>
 );
+const SellerTabs = ({ onLogout }) => {
   const { metrics } = useSeller();
   const orderBadge =
     metrics.inProgressOrders > 0
@@ -112,6 +135,7 @@ const AuthStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="Login" component={SellerLoginScreen} />
     <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+    <Stack.Screen name="PasswordReset" component={PasswordResetScreen} />
   </Stack.Navigator>
 );
 
@@ -119,6 +143,55 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  // Handle deep links for password reset
+  useEffect(() => {
+    const handleDeepLink = async (url) => {
+      if (!url) return;
+
+      try {
+        // Extract tokens from URL hash or query
+        let params = null;
+        if (url.includes("#")) {
+          const hash = url.split("#")[1];
+          params = new URLSearchParams(hash);
+        } else if (url.includes("?")) {
+          const query = url.split("?")[1];
+          params = new URLSearchParams(query);
+        }
+
+        if (params) {
+          const accessToken = params.get("access_token");
+          const type = params.get("type");
+
+          if (accessToken && type === "recovery") {
+            setIsResettingPassword(true);
+
+            // Set session
+            const { error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: params.get("refresh_token") || "",
+            });
+
+            if (error) console.error("Error setting session:", error);
+          }
+        }
+      } catch (e) {
+        console.error("Deep link error:", e);
+      }
+    };
+
+    Linking.getInitialURL().then(url => {
+      if (url) handleDeepLink(url);
+    });
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      handleDeepLink(url);
+    });
+
+    return () => subscription.remove();
+  }, []);
 
   // AsyncStorage keys
   const AUTH_USER_KEY = "express_seller_user";
@@ -166,6 +239,10 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsResettingPassword(true);
+      }
+
       const newUser = session?.user ?? null;
       const newRole = normalizeRole(newUser?.user_metadata?.role || null);
 
@@ -225,11 +302,17 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <StatusBar style="dark" />
-        <View style={styles.scene}>
-          <View style={styles.center}>
-            <Text>Loading...</Text>
-          </View>
-        </View>
+        <LoadingAnimation />
+      </SafeAreaProvider>
+    );
+  }
+
+  if (isResettingPassword) {
+    return (
+      <SafeAreaProvider>
+        <ToastProvider>
+          <PasswordResetScreen onComplete={() => setIsResettingPassword(false)} />
+        </ToastProvider>
       </SafeAreaProvider>
     );
   }
@@ -241,36 +324,39 @@ export default function App() {
     <SafeAreaProvider>
       <ToastProvider>
         <SellerProvider>
-          <NavigationContainer theme={navTheme}>
-            <StatusBar style="dark" />
-            {isSeller ? (
-              <View style={styles.appBackground}>
-                <SellerStack onLogout={handleLogout} />
-              </View>
-            ) : isOtherRole ? (
-              <View style={styles.scene}>
-                <View style={styles.center}>
-                  <Ionicons
-                    name="storefront-outline"
-                    size={80}
-                    color={colors.secondary}
-                  />
-                  <Text style={styles.title}>Access Denied</Text>
-                  <Text style={styles.subtitle}>
-                    You do not have seller privileges.
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.button}
-                    onPress={handleLogout}
-                  >
-                    <Text style={styles.buttonText}>Logout</Text>
-                  </TouchableOpacity>
+          <NotificationProvider userId={user?.id}>
+            <NavigationContainer theme={navTheme} linking={linking}>
+              <StatusBar style="dark" />
+              {isSeller ? (
+                <View style={styles.appBackground}>
+                  <SellerStack onLogout={handleLogout} />
                 </View>
-              </View>
-            ) : (
-              <AuthStack />
-            )}
-          </NavigationContainer>
+              ) : isOtherRole ? (
+                <View style={styles.scene}>
+                  <View style={styles.center}>
+                    <Ionicons
+                      name="storefront-outline"
+                      size={80}
+                      color={colors.secondary}
+                      style={{ marginBottom: 16 }}
+                    />
+                    <Text style={styles.title}>Access Denied</Text>
+                    <Text style={styles.subtitle}>
+                      You do not have seller privileges.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.button}
+                      onPress={handleLogout}
+                    >
+                      <Text style={styles.buttonText}>Logout</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <AuthStack />
+              )}
+            </NavigationContainer>
+          </NotificationProvider>
         </SellerProvider>
       </ToastProvider>
     </SafeAreaProvider>

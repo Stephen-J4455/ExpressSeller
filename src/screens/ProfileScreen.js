@@ -8,13 +8,17 @@ import {
   TextInput,
   View,
   Image,
-  Alert,
+  FlatList,
+  RefreshControl,
+  Modal,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useSeller } from "../context/SellerContext";
+import { useToast } from "../context/ToastContext";
 import { colors } from "../theme/colors";
 import { supabase } from "../../supabase";
+import { LoadingAnimation } from "../components/LoadingAnimation";
 
 const BADGE_CONFIG = {
   verified: { label: "Verified", icon: "checkmark-circle", color: "#10B981" },
@@ -34,12 +38,16 @@ export const ProfileScreen = () => {
     metrics,
     createSupportTicket,
     updateProfile,
+    sellerId,
   } = useSeller();
+  const toast = useToast();
+  const [activeTab, setActiveTab] = useState('main');
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState("medium");
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [showLoadingPreview, setShowLoadingPreview] = useState(false);
   const [editName, setEditName] = useState(profile?.name || "");
   const [editEmail, setEditEmail] = useState(profile?.email || "");
   const [editPhone, setEditPhone] = useState(profile?.phone || "");
@@ -64,6 +72,10 @@ export const ProfileScreen = () => {
   const [editWebsite, setEditWebsite] = useState(profile?.social_website || "");
   const [saving, setSaving] = useState(false);
 
+  // Followers state
+  const [followers, setFollowers] = useState([]);
+  const [followersLoading, setFollowersLoading] = useState(false);
+
   const categoryCounts = useMemo(() => {
     const counts = {};
     products
@@ -74,6 +86,58 @@ export const ProfileScreen = () => {
       });
     return counts;
   }, [products]);
+
+  // Fetch followers
+  const fetchFollowers = async () => {
+    if (!sellerId) return;
+    setFollowersLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('express_follows')
+        .select(`
+          id,
+          created_at,
+          user_id
+        `)
+        .eq('seller_id', sellerId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Get user details separately if we have followers
+      if (data && data.length > 0) {
+        const userIds = data.map(follow => follow.user_id);
+        const { data: users, error: usersError } = await supabase
+          .from('express_profiles')
+          .select('id, full_name, avatar_url')
+          .in('id', userIds);
+
+        if (!usersError && users) {
+          // Combine followers with user data
+          const followersWithUsers = data.map(follow => ({
+            ...follow,
+            user: users.find(user => user.id === follow.user_id)
+          }));
+          setFollowers(followersWithUsers);
+        } else {
+          setFollowers(data);
+        }
+      } else {
+        setFollowers(data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching followers:', err);
+      setFollowers([]);
+    } finally {
+      setFollowersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'followers' && sellerId) {
+      fetchFollowers();
+    }
+  }, [activeTab, sellerId]);
 
   useEffect(() => {
     if (!editing) {
@@ -95,7 +159,7 @@ export const ProfileScreen = () => {
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Permission needed", "Please grant camera roll permissions");
+      toast.error("Camera permission is required");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -160,8 +224,9 @@ export const ProfileScreen = () => {
       };
       await updateProfile(updates);
       setEditing(false);
+      toast.success("Profile updated successfully!");
     } catch (error) {
-      Alert.alert("Error", error.message);
+      toast.error(error.message);
     } finally {
       setSaving(false);
     }
@@ -194,288 +259,423 @@ export const ProfileScreen = () => {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 140 }}
-    >
-      <View style={styles.card}>
-        <View style={styles.header}>
-          {editing ? (
-            <View style={styles.avatarEdit}>
-              <Pressable onPress={pickImage} style={styles.avatarContainer}>
-                {editAvatar ? (
-                  <Image source={{ uri: editAvatar }} style={styles.avatar} />
-                ) : (
-                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                    <Ionicons name="person" size={40} color={colors.muted} />
-                  </View>
-                )}
-                <View style={styles.cameraIcon}>
-                  <Ionicons name="camera" size={16} color="#fff" />
-                </View>
-              </Pressable>
-              <View style={styles.editActions}>
-                <Pressable
-                  onPress={() => setEditing(false)}
-                  style={styles.cancelButton}
-                >
-                  <Ionicons name="close" size={20} color={colors.muted} />
-                </Pressable>
-                <Pressable
-                  onPress={saveProfile}
-                  style={styles.saveButton}
-                  disabled={saving}
-                >
-                  {saving ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="checkmark" size={20} color="#fff" />
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.headerView}>
-              {profile?.avatar ? (
-                <Image source={{ uri: profile.avatar }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                  <Ionicons name="person" size={40} color={colors.muted} />
-                </View>
-              )}
-              <Pressable onPress={startEditing} style={styles.editButton}>
-                <Ionicons name="pencil" size={20} color={colors.primary} />
-              </Pressable>
-            </View>
-          )}
-        </View>
-
-        {editing ? (
-          <View style={styles.editForm}>
-            <Text style={styles.label}>Store Name</Text>
-            <TextInput
-              style={styles.input}
-              value={editName}
-              onChangeText={setEditName}
-              placeholder="Store name"
-            />
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              value={editEmail}
-              onChangeText={setEditEmail}
-              placeholder="Email"
-              keyboardType="email-address"
-            />
-            <Text style={styles.label}>Phone</Text>
-            <TextInput
-              style={styles.input}
-              value={editPhone}
-              onChangeText={setEditPhone}
-              placeholder="Phone number"
-              keyboardType="phone-pad"
-            />
-            <Text style={styles.label}>Location</Text>
-            <TextInput
-              style={styles.input}
-              value={editLocation}
-              onChangeText={setEditLocation}
-              placeholder="Store location"
-            />
-            <Text style={styles.label}>Fulfillment Speed</Text>
-            <TextInput
-              style={styles.input}
-              value={editFulfillmentSpeed}
-              onChangeText={setEditFulfillmentSpeed}
-              placeholder="e.g., Same day, 2-3 days"
-            />
-            <Text style={styles.label}>Weekly Target ($)</Text>
-            <TextInput
-              style={styles.input}
-              value={editWeeklyTarget}
-              onChangeText={setEditWeeklyTarget}
-              placeholder="Target revenue"
-              keyboardType="numeric"
-            />
-
-            <Text style={styles.sectionTitle}>Social Media Links</Text>
-            <Text style={styles.label}>Facebook</Text>
-            <TextInput
-              style={styles.input}
-              value={editFacebook}
-              onChangeText={setEditFacebook}
-              placeholder="https://facebook.com/yourpage"
-              keyboardType="url"
-            />
-            <Text style={styles.label}>Instagram</Text>
-            <TextInput
-              style={styles.input}
-              value={editInstagram}
-              onChangeText={setEditInstagram}
-              placeholder="https://instagram.com/yourhandle"
-              keyboardType="url"
-            />
-            <Text style={styles.label}>Twitter/X</Text>
-            <TextInput
-              style={styles.input}
-              value={editTwitter}
-              onChangeText={setEditTwitter}
-              placeholder="https://twitter.com/yourhandle"
-              keyboardType="url"
-            />
-            <Text style={styles.label}>WhatsApp</Text>
-            <TextInput
-              style={styles.input}
-              value={editWhatsapp}
-              onChangeText={setEditWhatsapp}
-              placeholder="+1234567890"
-              keyboardType="phone-pad"
-            />
-            <Text style={styles.label}>Website</Text>
-            <TextInput
-              style={styles.input}
-              value={editWebsite}
-              onChangeText={setEditWebsite}
-              placeholder="https://yourwebsite.com"
-              keyboardType="url"
-            />
-          </View>
-        ) : (
-          <>
-            <Text style={styles.title}>{profile?.name || "Seller"}</Text>
-            <Text style={styles.subtitle}>
-              {profile?.email || "Add contact"}
-            </Text>
-            {profile?.phone && (
-              <Text style={styles.subtitle}>{profile.phone}</Text>
-            )}
-            {profile?.location && (
-              <Text style={styles.subtitle}>{profile.location}</Text>
-            )}
-
-            {profile?.badges && profile.badges.length > 0 && (
-              <View style={styles.badgeContainer}>
-                {profile.badges.map((badgeId) => {
-                  const badge = BADGE_CONFIG[badgeId];
-                  if (!badge) return null;
-                  return (
-                    <View
-                      key={badgeId}
-                      style={[
-                        styles.badge,
-                        { backgroundColor: badge.color + "20" },
-                      ]}
-                    >
-                      <Ionicons
-                        name={badge.icon}
-                        size={14}
-                        color={badge.color}
-                      />
-                      <Text style={[styles.badgeText, { color: badge.color }]}>
-                        {badge.label}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-
-            <View style={styles.row}>
-              <View>
-                <Text style={styles.metaLabel}>Rating</Text>
-                <Text style={styles.metaValue}>{profile?.rating || "--"}</Text>
-              </View>
-              <View>
-                <Text style={styles.metaLabel}>Weekly target</Text>
-                <Text style={styles.metaValue}>
-                  ${profile?.weekly_target || 0}
-                </Text>
-              </View>
-              <View>
-                <Text style={styles.metaLabel}>Fulfillment</Text>
-                <Text style={styles.metaValue}>
-                  {profile?.fulfillment_speed || "Standard"}
-                </Text>
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.section}>Category coverage</Text>
-        <View style={styles.tagGrid}>
-          {categories.map((cat) => (
-            <View key={cat.id} style={styles.tag}>
-              <Text style={styles.tagTitle}>{cat.name}</Text>
-              <Text style={styles.tagSubtitle}>
-                Live items: {categoryCounts[cat.name] || 0}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.section}>Need support?</Text>
-        <Text style={styles.subtitle}>
-          Create a ticket and our admin team will respond quickly.
-        </Text>
-        <Text style={styles.label}>Subject</Text>
-        <TextInput
-          style={styles.input}
-          value={subject}
-          onChangeText={setSubject}
-          placeholder="e.g. Featured placement"
-        />
-        <Text style={styles.label}>Message</Text>
-        <TextInput
-          style={[styles.input, { height: 120 }]}
-          multiline
-          value={message}
-          onChangeText={setMessage}
-          placeholder="Share details..."
-        />
-
-        <View style={styles.priorityRow}>
-          {[
-            { key: "low", label: "Low" },
-            { key: "medium", label: "Medium" },
-            { key: "high", label: "High" },
-          ].map(({ key, label }) => (
-            <Pressable
-              key={key}
-              style={[
-                styles.priorityChip,
-                priority === key && styles.priorityChipActive,
-              ]}
-              onPress={() => setPriority(key)}
-            >
-              <Text
-                style={[
-                  styles.priorityText,
-                  priority === key && styles.priorityTextActive,
-                ]}
-              >
-                {label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
+    <View style={styles.container}>
+      {/* Tabs */}
+      <View style={styles.tabBar}>
         <Pressable
-          style={styles.primaryButton}
-          onPress={submitTicket}
-          disabled={submitting || !subject || !message}
+          style={[styles.tab, activeTab === 'main' && styles.tabActive]}
+          onPress={() => setActiveTab('main')}
         >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.primaryButtonText}>Send ticket</Text>
-          )}
+          <Ionicons
+            name="person"
+            size={20}
+            color={activeTab === 'main' ? colors.primary : colors.muted}
+          />
+          <Text style={[styles.tabText, activeTab === 'main' && styles.tabTextActive]}>
+            Main
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, activeTab === 'followers' && styles.tabActive]}
+          onPress={() => setActiveTab('followers')}
+        >
+          <Ionicons
+            name="people"
+            size={20}
+            color={activeTab === 'followers' ? colors.primary : colors.muted}
+          />
+          <Text style={[styles.tabText, activeTab === 'followers' && styles.tabTextActive]}>
+            Followers
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, activeTab === 'support' && styles.tabActive]}
+          onPress={() => setActiveTab('support')}
+        >
+          <Ionicons
+            name="help-circle"
+            size={20}
+            color={activeTab === 'support' ? colors.primary : colors.muted}
+          />
+          <Text style={[styles.tabText, activeTab === 'support' && styles.tabTextActive]}>
+            Support
+          </Text>
         </Pressable>
       </View>
-    </ScrollView>
+
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 140 }}
+      >
+        {/* Main Tab */}
+        {activeTab === 'main' && (
+          <View style={styles.tabContent}>
+            <View style={styles.card}>
+              <View style={styles.header}>
+                {editing ? (
+                  <View style={styles.avatarEdit}>
+                    <Pressable onPress={pickImage} style={styles.avatarContainer}>
+                      {editAvatar ? (
+                        <Image source={{ uri: editAvatar }} style={styles.avatar} />
+                      ) : (
+                        <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                          <Ionicons name="person" size={40} color={colors.muted} />
+                        </View>
+                      )}
+                      <View style={styles.cameraIcon}>
+                        <Ionicons name="camera" size={16} color="#fff" />
+                      </View>
+                    </Pressable>
+                    <View style={styles.editActions}>
+                      <Pressable
+                        onPress={() => setEditing(false)}
+                        style={styles.cancelButton}
+                      >
+                        <Ionicons name="close" size={20} color={colors.muted} />
+                      </Pressable>
+                      <Pressable
+                        onPress={saveProfile}
+                        style={styles.saveButton}
+                        disabled={saving}
+                      >
+                        {saving ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="checkmark" size={20} color="#fff" />
+                        )}
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.headerView}>
+                    {profile?.avatar ? (
+                      <Image source={{ uri: profile.avatar }} style={styles.avatar} />
+                    ) : (
+                      <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                        <Ionicons name="person" size={40} color={colors.muted} />
+                      </View>
+                    )}
+                    <Pressable onPress={startEditing} style={styles.editButton}>
+                      <Ionicons name="pencil" size={20} color={colors.primary} />
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+
+              {editing ? (
+                <View style={styles.editForm}>
+                  <Text style={styles.label}>Store Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editName}
+                    onChangeText={setEditName}
+                    placeholder="Store name"
+                  />
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editEmail}
+                    onChangeText={setEditEmail}
+                    placeholder="Email"
+                    keyboardType="email-address"
+                  />
+                  <Text style={styles.label}>Phone</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editPhone}
+                    onChangeText={setEditPhone}
+                    placeholder="Phone number"
+                    keyboardType="phone-pad"
+                  />
+                  <Text style={styles.label}>Location</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editLocation}
+                    onChangeText={setEditLocation}
+                    placeholder="Store location"
+                  />
+                  <Text style={styles.label}>Fulfillment Speed</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editFulfillmentSpeed}
+                    onChangeText={setEditFulfillmentSpeed}
+                    placeholder="e.g., Same day, 2-3 days"
+                  />
+                  <Text style={styles.label}>Weekly Target ($)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editWeeklyTarget}
+                    onChangeText={setEditWeeklyTarget}
+                    placeholder="Target revenue"
+                    keyboardType="numeric"
+                  />
+
+                  <Text style={styles.sectionTitle}>Social Media Links</Text>
+                  <Text style={styles.label}>Facebook</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editFacebook}
+                    onChangeText={setEditFacebook}
+                    placeholder="https://facebook.com/yourpage"
+                    keyboardType="url"
+                  />
+                  <Text style={styles.label}>Instagram</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editInstagram}
+                    onChangeText={setEditInstagram}
+                    placeholder="https://instagram.com/yourhandle"
+                    keyboardType="url"
+                  />
+                  <Text style={styles.label}>Twitter/X</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editTwitter}
+                    onChangeText={setEditTwitter}
+                    placeholder="https://twitter.com/yourhandle"
+                    keyboardType="url"
+                  />
+                  <Text style={styles.label}>WhatsApp</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editWhatsapp}
+                    onChangeText={setEditWhatsapp}
+                    placeholder="+1234567890"
+                    keyboardType="phone-pad"
+                  />
+                  <Text style={styles.label}>Website</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={editWebsite}
+                    onChangeText={setEditWebsite}
+                    placeholder="https://yourwebsite.com"
+                    keyboardType="url"
+                  />
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.title}>{profile?.name || "Seller"}</Text>
+                  <Text style={styles.subtitle}>
+                    {profile?.email || "Add contact"}
+                  </Text>
+                  {profile?.phone && (
+                    <Text style={styles.subtitle}>{profile.phone}</Text>
+                  )}
+                  {profile?.location && (
+                    <Text style={styles.subtitle}>{profile.location}</Text>
+                  )}
+
+                  {profile?.badges && profile.badges.length > 0 && (
+                    <View style={styles.badgeContainer}>
+                      {profile.badges.map((badgeId) => {
+                        const badge = BADGE_CONFIG[badgeId];
+                        if (!badge) return null;
+                        return (
+                          <View
+                            key={badgeId}
+                            style={[
+                              styles.badge,
+                              { backgroundColor: badge.color + "20" },
+                            ]}
+                          >
+                            <Ionicons
+                              name={badge.icon}
+                              size={14}
+                              color={badge.color}
+                            />
+                            <Text style={[styles.badgeText, { color: badge.color }]}>
+                              {badge.label}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  <View style={styles.row}>
+                    <View>
+                      <Text style={styles.metaLabel}>Rating</Text>
+                      <Text style={styles.metaValue}>{profile?.rating || "--"}</Text>
+                    </View>
+                    <View>
+                      <Text style={styles.metaLabel}>Weekly target</Text>
+                      <Text style={styles.metaValue}>
+                        ${profile?.weekly_target || 0}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.metaLabel}>Fulfillment</Text>
+                      <Text style={styles.metaValue}>
+                        {profile?.fulfillment_speed || "Standard"}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              )}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.section}>Category coverage</Text>
+              <View style={styles.tagGrid}>
+                {categories.map((cat) => (
+                  <View key={cat.id} style={styles.tag}>
+                    <Text style={styles.tagTitle}>{cat.name}</Text>
+                    <Text style={styles.tagSubtitle}>
+                      Live items: {categoryCounts[cat.name] || 0}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Followers Tab */}
+        {activeTab === 'followers' && (
+          <View style={styles.tabContent}>
+            <View style={styles.card}>
+              <View style={styles.followersHeader}>
+                <Text style={styles.section}>Your Followers</Text>
+                <View style={styles.followerCountBadge}>
+                  <Text style={styles.followerCountText}>{followers.length}</Text>
+                </View>
+              </View>
+
+              {followersLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.loadingText}>Loading followers...</Text>
+                </View>
+              ) : followers.length === 0 ? (
+                <View style={styles.emptyFollowers}>
+                  <Ionicons name="people-outline" size={64} color={colors.muted} />
+                  <Text style={styles.emptyFollowersTitle}>No followers yet</Text>
+                  <Text style={styles.emptyFollowersText}>
+                    When customers follow your store, they'll appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.followersList}>
+                  {followers.map((follow) => (
+                    <View key={follow.id} style={styles.followerItem}>
+                      <View style={styles.followerAvatar}>
+                        {follow.user?.avatar_url ? (
+                          <Image
+                            source={{ uri: follow.user.avatar_url }}
+                            style={styles.followerAvatarImage}
+                          />
+                        ) : (
+                          <Ionicons name="person" size={24} color={colors.primary} />
+                        )}
+                      </View>
+                      <View style={styles.followerInfo}>
+                        <Text style={styles.followerName}>
+                          {follow.user?.full_name || 'Customer'}
+                        </Text>
+                        <Text style={styles.followerDate}>
+                          Followed {new Date(follow.created_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Support Tab */}
+        {activeTab === 'support' && (
+          <View style={styles.tabContent}>
+            <View style={styles.card}>
+              <Text style={styles.section}>Need support?</Text>
+              <Text style={styles.subtitle}>
+                Create a ticket and our admin team will respond quickly.
+              </Text>
+              <Text style={styles.label}>Subject</Text>
+              <TextInput
+                style={styles.input}
+                value={subject}
+                onChangeText={setSubject}
+                placeholder="e.g. Featured placement"
+              />
+              <Text style={styles.label}>Message</Text>
+              <TextInput
+                style={[styles.input, { height: 120 }]}
+                multiline
+                value={message}
+                onChangeText={setMessage}
+                placeholder="Share details..."
+              />
+
+              <View style={styles.priorityRow}>
+                {[
+                  { key: "low", label: "Low" },
+                  { key: "medium", label: "Medium" },
+                  { key: "high", label: "High" },
+                ].map(({ key, label }) => (
+                  <Pressable
+                    key={key}
+                    style={[
+                      styles.priorityChip,
+                      priority === key && styles.priorityChipActive,
+                    ]}
+                    onPress={() => setPriority(key)}
+                  >
+                    <Text
+                      style={[
+                        styles.priorityText,
+                        priority === key && styles.priorityTextActive,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Pressable
+                style={styles.primaryButton}
+                onPress={submitTicket}
+                disabled={submitting || !subject || !message}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Send ticket</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* App Version - Clickable */}
+      <View style={styles.versionSection}>
+        <Pressable onPress={() => setShowLoadingPreview(true)}>
+          <Text style={styles.versionText}>Express Seller v1.0.0</Text>
+        </Pressable>
+      </View>
+
+      {/* Loading Animation Preview Modal */}
+      <Modal
+        visible={showLoadingPreview}
+        transparent={false}
+        animationType="fade"
+        onRequestClose={() => setShowLoadingPreview(false)}
+      >
+        <View style={styles.modalContainer}>
+          <Pressable
+            style={styles.closeButton}
+            onPress={() => setShowLoadingPreview(false)}
+          >
+            <View style={styles.closeButtonInner}>
+              <Ionicons name="close" size={24} color={colors.dark} />
+            </View>
+          </Pressable>
+          <LoadingAnimation />
+        </View>
+      </Modal>
+    </View>
   );
 };
 
@@ -483,8 +683,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.light,
-    padding: 16,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
     paddingTop: 50,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E4E8F0',
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: colors.primary,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  tabTextActive: {
+    color: colors.primary,
+  },
+  tabContent: {
+    padding: 16,
   },
   card: {
     backgroundColor: "#fff",
@@ -674,5 +904,121 @@ const styles = StyleSheet.create({
     color: colors.dark,
     marginTop: 24,
     marginBottom: 12,
+  },
+  // Followers styles
+  followersHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  followerCountBadge: {
+    backgroundColor: colors.primaryLight,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  followerCountText: {
+    color: colors.primary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  loadingText: {
+    color: colors.muted,
+    fontSize: 14,
+  },
+  emptyFollowers: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  emptyFollowersTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.dark,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyFollowersText: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  followersList: {
+    gap: 12,
+  },
+  followerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.light,
+    padding: 12,
+    borderRadius: 12,
+    gap: 12,
+  },
+  followerAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  followerAvatarImage: {
+    width: 48,
+    height: 48,
+  },
+  followerInfo: {
+    flex: 1,
+  },
+  followerName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.dark,
+  },
+  followerDate: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  // Version section
+  versionSection: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    alignItems: 'center',
+  },
+  versionText: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+  },
+  // Modal styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.light,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    zIndex: 10,
+  },
+  closeButtonInner: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.dark,
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
+    elevation: 4,
   },
 });

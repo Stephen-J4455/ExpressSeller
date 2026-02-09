@@ -18,19 +18,30 @@ export const StatusPill = ({ value }) => {
   const tone = toneMap[normalized] || colors.muted;
   return (
     <View style={[styles.pill, { backgroundColor: tone + "22" }]}>
-      <Text style={[styles.text, { color: tone }]}>{value}</Text>
+      <Text
+        style={[styles.text, { color: tone }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "transparent",
+    minWidth: 50,
+    alignItems: "center",
   },
   text: {
-    fontWeight: "600",
+    fontWeight: "700",
     textTransform: "capitalize",
+    fontSize: 12,
   },
 });

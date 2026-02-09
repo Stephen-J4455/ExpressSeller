@@ -8,16 +8,27 @@ const supabaseAnonKey =
 export const supabase =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          storage: AsyncStorage,
-          autoRefreshToken: true,
-          persistSession: true,
-          detectSessionInUrl: false,
+      auth: {
+        storage: AsyncStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+      realtime: {
+        params: {
+          eventsPerSecond: 10,
         },
-        realtime: {
-          params: {
-            eventsPerSecond: 10,
-          },
-        },
-      })
+      },
+    })
     : null;
+
+// Edge function helper
+export const invokeEdgeFunction = async (functionName, body) => {
+  if (!supabase) throw new Error("Supabase not initialized");
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body,
+  });
+  if (error) throw error;
+  return data;
+};
+

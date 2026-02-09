@@ -5,8 +5,14 @@ export const SectionHeader = ({ title, subtitle, action }) => {
   return (
     <View style={styles.container}>
       <View>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        <Text style={styles.title} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={styles.subtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
       </View>
       {action ? <View>{action}</View> : null}
     </View>
@@ -18,15 +24,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-end",
-    marginBottom: 12,
+    marginBottom: 16,
+    marginTop: 8,
   },
   title: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 22,
+    fontWeight: "800",
     color: colors.dark,
+    letterSpacing: 0.5,
   },
   subtitle: {
     color: colors.muted,
-    marginTop: 4,
+    marginTop: 6,
+    fontSize: 14,
   },
 });

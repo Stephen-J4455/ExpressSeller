@@ -6,7 +6,6 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../supabase";
 
@@ -50,6 +49,8 @@ export const SellerProvider = ({ children }) => {
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [reviews, setReviews] = useState([]);
   const [profile, setProfile] = useState(null);
   const [sellerId, setSellerId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -123,9 +124,50 @@ export const SellerProvider = ({ children }) => {
       setProfile(null);
       setProducts([]);
       setOrders([]);
+      setConversations([]);
+      setReviews([]);
       setCategories(DEFAULT_CATEGORIES);
     } catch (error) {
       console.error("Error signing out:", error);
+    }
+  }, []);
+
+  // Fetch chats with user relationship
+  const fetchChats = useCallback(async (sellerIdParam) => {
+    if (!supabase || !sellerIdParam) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("express_chat_conversations")
+        .select(
+          `
+          id,
+          seller_id,
+          user_id,
+          last_message,
+          last_message_at,
+          created_at,
+          updated_at,
+          express_profiles!express_chat_conversations_user_id_fkey(id, full_name, email, avatar_url)
+        `,
+        )
+        .eq("seller_id", sellerIdParam)
+        .order("last_message_at", { ascending: false });
+
+      if (error) {
+        console.error("❌ Chats fetch error:", error);
+        return;
+      }
+
+      // Map the data to have a 'user' property for consistency
+      const conversationsData = (data || []).map(conv => ({
+        ...conv,
+        user: conv.express_profiles
+      }));
+
+      setConversations(conversationsData);
+    } catch (error) {
+      console.error("Error fetching chats:", error);
     }
   }, []);
 
@@ -150,15 +192,13 @@ export const SellerProvider = ({ children }) => {
           supabase.from("express_categories").select("id,name,icon,color"),
           supabase
             .from("express_products")
-            .select(
-              "id,title,price,category,status,thumbnail,thumbnails,badges,description,discount,sizes,quantity,sold_count,rating,created_at",
-            )
+            .select("*")
             .eq("seller_id", seller.id)
             .order("created_at", { ascending: false }),
           supabase
             .from("express_orders")
             .select(
-              "id,order_number,status,total,customer,shipping_address,eta,payment_status,created_at,items:express_order_items(id,title,quantity,price,thumbnail)",
+              "id,order_number,status,total,service_fee,customer,shipping_address,eta,payment_status,created_at,items:express_order_items(id,title,quantity,price,thumbnail)",
             )
             .eq("seller_id", seller.id)
             .order("created_at", { ascending: false })
@@ -175,46 +215,52 @@ export const SellerProvider = ({ children }) => {
       if (categoriesRes.error) throw categoriesRes.error;
       if (productsRes.error) throw productsRes.error;
       if (ordersRes.error) throw ordersRes.error;
-      if (profileRes.error && profileRes.error.code !== "PGRST116")
-        throw profileRes.error;
+      if (profileRes.error) throw profileRes.error;
 
-      let resolvedCategories = categoriesRes.data || [];
+      // Fetch reviews for items that belong to this seller
+      const productIds = productsRes.data?.map((p) => p.id) || [];
+      let reviewsData = [];
+      if (productIds.length > 0) {
+        try {
+          const { data: revs, error: revsError } = await supabase
+            .from("express_reviews")
+            .select("*, express_profiles(full_name, avatar_url)")
+            .in("product_id", productIds)
+            .order("created_at", { ascending: false });
 
-      // If no categories in DB, seed the default ones
-      if (resolvedCategories.length === 0) {
-        const { data: insertedCategories, error: insertError } = await supabase
-          .from("express_categories")
-          .insert(
-            DEFAULT_CATEGORIES.map((cat) => ({
-              name: cat.name,
-              icon: cat.icon,
-              color: cat.color,
-            })),
-          )
-          .select("id,name,icon,color");
-
-        if (!insertError && insertedCategories) {
-          resolvedCategories = insertedCategories;
-        } else {
-          // Fallback to defaults if insert fails
-          resolvedCategories = DEFAULT_CATEGORIES;
+          if (revsError) {
+            console.error("Reviews fetch error:", revsError);
+            // Fallback: try fetching without the join if join fails
+            if (revsError.code === "PGRST200" || revsError.message.includes("relationship")) {
+              const { data: fallbackRevs } = await supabase
+                .from("express_reviews")
+                .select("*")
+                .in("product_id", productIds)
+                .order("created_at", { ascending: false });
+              reviewsData = fallbackRevs || [];
+            }
+          } else {
+            reviewsData = revs || [];
+          }
+        } catch (revCatchError) {
+          console.error("Critical reviews fetch error:", revCatchError);
         }
       }
 
-      setCategories(resolvedCategories);
+      // Fetch chats separately with proper user mapping
+      await fetchChats(seller.id);
+
+      setCategories(categoriesRes.data || DEFAULT_CATEGORIES);
       setProducts(productsRes.data || []);
       setOrders(ordersRes.data || []);
-      setProfile(profileRes.data || null);
-    } catch (err) {
-      setError(err.message);
-      console.error("Fetch error:", err);
-
-      // Use local defaults if categories failed to load
-      setCategories((prev) => (prev.length ? prev : DEFAULT_CATEGORIES));
-    } finally {
+      setReviews(reviewsData);
+      setProfile(profileRes.data);
+      setLoading(false);
+    } catch (error) {
+      console.error("❌ fetchAll error:", error);
       setLoading(false);
     }
-  }, [getSellerId]);
+  }, [getSellerId, fetchChats]);
 
   // Setup realtime subscriptions
   useEffect(() => {
@@ -243,11 +289,8 @@ export const SellerProvider = ({ children }) => {
               .then(({ data }) => {
                 if (data) setOrders((prev) => [data, ...prev]);
               });
-            // Show notification
-            Alert.alert(
-              "New Order!",
-              `Order #${payload.new.order_number} received`,
-            );
+            // Log new order notification
+            console.log(`New Order! Order #${payload.new.order_number} received`);
           } else if (payload.eventType === "UPDATE") {
             setOrders((prev) =>
               prev.map((order) =>
@@ -291,10 +334,7 @@ export const SellerProvider = ({ children }) => {
               };
               const msg = statusMessages[payload.new.status];
               if (msg) {
-                Alert.alert(
-                  "Product Update",
-                  `"${payload.new.title}" has been ${msg}`,
-                );
+                console.log(`Product Update: "${payload.new.title}" has been ${msg}`);
               }
             }
           }
@@ -302,11 +342,31 @@ export const SellerProvider = ({ children }) => {
       )
       .subscribe();
 
+    // Subscribe to chat changes
+    const chatsChannel = supabase
+      .channel("seller-chats")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "express_chat_conversations",
+          filter: `seller_id=eq.${sellerId}`,
+        },
+        (payload) => {
+          console.log("Chat change:", payload);
+          // Re-fetch all chats to ensure user relationship data is preserved
+          fetchChats(sellerId);
+        },
+      )
+      .subscribe();
+
     return () => {
       ordersChannel.unsubscribe();
       productsChannel.unsubscribe();
+      chatsChannel.unsubscribe();
     };
-  }, [sellerId]);
+  }, [sellerId, fetchChats]);
 
   useEffect(() => {
     fetchAll();
@@ -325,6 +385,7 @@ export const SellerProvider = ({ children }) => {
       ["processing", "packed"].includes(o.status),
     ).length;
     const totalSold = products.reduce((sum, p) => sum + (p.sold_count || 0), 0);
+    const unreadChats = conversations.filter((c) => c.unread_count > 0).length;
     return {
       pendingProducts,
       activeProducts,
@@ -332,8 +393,9 @@ export const SellerProvider = ({ children }) => {
       revenue,
       inProgressOrders,
       totalSold,
+      unreadChats,
     };
-  }, [products, orders]);
+  }, [products, orders, conversations]);
 
   const createProduct = useCallback(
     async ({
@@ -361,26 +423,20 @@ export const SellerProvider = ({ children }) => {
       specifications,
     }) => {
       if (!supabase) {
-        Alert.alert("Error", "Not authenticated as seller");
-        return;
+        throw new Error("Not authenticated as seller");
       }
 
       // Re-fetch seller id in case local state is stale
       const ensuredSellerId = sellerId || (await getSellerId())?.id;
       if (!ensuredSellerId) {
-        Alert.alert(
-          "Seller profile missing",
-          "We could not find your seller account. Please re-login or contact support.",
-        );
-        return;
+        throw new Error("Seller profile missing. Please re-login or contact support.");
       }
 
       if (!sellerId) setSellerId(ensuredSellerId);
 
       const numericPrice = Number(price);
       if (Number.isNaN(numericPrice)) {
-        Alert.alert("Invalid price", "Price must be numeric");
-        return;
+        throw new Error("Price must be numeric");
       }
 
       const categoryObj = categories.find((c) => c.name === category);
@@ -421,8 +477,7 @@ export const SellerProvider = ({ children }) => {
         .single();
 
       if (insertError) {
-        Alert.alert("Unable to create product", insertError.message);
-        return;
+        throw new Error(insertError.message);
       }
 
       setProducts((prev) => [data, ...prev]);
@@ -438,8 +493,7 @@ export const SellerProvider = ({ children }) => {
       .update({ status })
       .eq("id", productId);
     if (updateError) {
-      Alert.alert("Unable to update status", updateError.message);
-      return;
+      throw new Error(updateError.message);
     }
     setProducts((prev) =>
       prev.map((p) => (p.id === productId ? { ...p, status } : p)),
@@ -468,8 +522,7 @@ export const SellerProvider = ({ children }) => {
       .delete()
       .eq("id", productId);
     if (deleteError) {
-      Alert.alert("Unable to delete product", deleteError.message);
-      return;
+      throw new Error(deleteError.message);
     }
     setProducts((prev) => prev.filter((p) => p.id !== productId));
   }, []);
@@ -487,8 +540,7 @@ export const SellerProvider = ({ children }) => {
       .update(updates)
       .eq("id", orderId);
     if (updateError) {
-      Alert.alert("Unable to update order", updateError.message);
-      return;
+      throw new Error(updateError.message);
     }
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, ...updates } : o)),
@@ -515,13 +567,30 @@ export const SellerProvider = ({ children }) => {
         .from("express_support_tickets")
         .insert(body);
       if (ticketError) {
-        Alert.alert("Unable to create ticket", ticketError.message);
-        return;
+        throw new Error(ticketError.message);
       }
-      Alert.alert("Success", "Support ticket created");
     },
     [sellerId, profile],
   );
+
+  const replyToReview = useCallback(async (reviewId, comment) => {
+    if (!supabase || !sellerId) return;
+    const { data, error } = await supabase
+      .from("express_review_comments")
+      .insert({
+        review_id: reviewId,
+        seller_id: sellerId,
+        comment,
+        is_approved: true, // Seller replies are auto-approved for now
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return data;
+  }, [sellerId]);
 
   const updateProfile = useCallback(
     async (updates) => {
@@ -533,11 +602,9 @@ export const SellerProvider = ({ children }) => {
         .select()
         .single();
       if (updateError) {
-        Alert.alert("Unable to update profile", updateError.message);
-        return;
+        throw new Error(updateError.message);
       }
       setProfile(data);
-      Alert.alert("Success", "Profile updated");
     },
     [sellerId],
   );
@@ -546,13 +613,17 @@ export const SellerProvider = ({ children }) => {
     categories,
     products,
     orders,
+    conversations,
+    chats: conversations,
     profile,
+    seller: profile,
     sellerId,
     vendorName: profile?.name || "Seller",
     loading,
     error,
     metrics,
     refresh: fetchAll,
+    refreshChats: () => fetchChats(sellerId),
     createProduct,
     updateProduct,
     deleteProduct,
@@ -560,6 +631,8 @@ export const SellerProvider = ({ children }) => {
     advanceOrderStatus,
     createSupportTicket,
     updateProfile,
+    replyToReview,
+    reviews,
     logout,
   };
 

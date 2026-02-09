@@ -8,35 +8,58 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
-  Alert,
   Image,
+  ActivityIndicator,
+  Keyboard,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { supabase } from "../supabase";
+import { supabase } from "../../supabase";
 import { useSeller } from "../context/SellerContext";
+import { useToast } from "../context/ToastContext";
 import { colors } from "../theme/colors";
 
 export const SellerChatScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
-  const { seller } = useSeller();
+  const { sellerId } = useSeller();
+  const toast = useToast();
   const conversation = route?.params?.conversation;
+  const userName = conversation?.user?.full_name || conversation?.user?.email || "Customer";
+
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const flatListRef = useRef(null);
+
+  // Handle keyboard visibility
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (conversation) {
-      navigation.setOptions({
-        title: `Chat with Customer`,
-      });
       fetchMessages();
-      setupRealtimeSubscription();
+      const subscription = setupRealtimeSubscription();
+      return () => {
+        if (subscription) subscription.unsubscribe();
+      };
     }
-  }, [conversation, navigation]);
+  }, [conversation]);
 
   const fetchMessages = async () => {
     if (!conversation) return;
@@ -50,6 +73,11 @@ export const SellerChatScreen = ({ route, navigation }) => {
 
       if (error) throw error;
       setMessages(data || []);
+
+      // Auto scroll to bottom after messages are loaded
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
     } catch (error) {
       console.error("Error fetching messages:", error);
     } finally {
@@ -60,7 +88,7 @@ export const SellerChatScreen = ({ route, navigation }) => {
   const setupRealtimeSubscription = () => {
     if (!conversation) return;
 
-    const channel = supabase
+    return supabase
       .channel(`chat-${conversation.id}`)
       .on(
         "postgres_changes",
@@ -71,33 +99,61 @@ export const SellerChatScreen = ({ route, navigation }) => {
           filter: `conversation_id=eq.${conversation.id}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new]);
+          setMessages((prev) => {
+            // Avoid duplicates
+            if (prev.some(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
         },
       )
       .subscribe();
+  };
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+  useEffect(() => {
+    if (messages.length > 0) {
+      markAsRead();
+    }
+  }, [messages]);
+
+  const markAsRead = async () => {
+    if (!conversation || !sellerId) return;
+
+    try {
+      const { error } = await supabase
+        .from("express_chat_messages")
+        .update({ is_read: true })
+        .eq("conversation_id", conversation.id)
+        .neq("sender_id", sellerId)
+        .eq("is_read", false);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error("Error marking messages as read:", error);
+    }
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !conversation || sending) return;
+    if (!newMessage.trim() || !conversation || sending || !sellerId) return;
 
+    const messageText = newMessage.trim();
     setSending(true);
+    setNewMessage("");
+
     try {
       const { error } = await supabase.from("express_chat_messages").insert({
         conversation_id: conversation.id,
-        sender_id: seller.id,
+        sender_id: sellerId,
         sender_type: "seller",
-        message: newMessage.trim(),
+        message: messageText,
       });
 
       if (error) throw error;
-      setNewMessage("");
+
+      // Update unread_count logic if needed - normally handled by backend triggers or context
     } catch (error) {
       console.error("Error sending message:", error);
-      Alert.alert("Error", "Failed to send message");
+      setNewMessage(messageText);
+      toast.error("Failed to send message");
     } finally {
       setSending(false);
     }
@@ -109,18 +165,23 @@ export const SellerChatScreen = ({ route, navigation }) => {
     return (
       <View
         style={[
-          styles.messageContainer,
-          isSeller ? styles.sellerMessage : styles.userMessage,
+          styles.messageWrapper,
+          isSeller ? styles.sellerWrapper : styles.userWrapper,
         ]}
       >
-        <Text
-          style={[styles.messageText, isSeller && styles.sellerMessageText]}
+        <View
+          style={[
+            styles.messageContainer,
+            isSeller ? styles.sellerMessage : styles.userMessage,
+          ]}
         >
-          {item.message}
-        </Text>
-        <Text
-          style={[styles.messageTime, isSeller && styles.sellerMessageTime]}
-        >
+          <Text
+            style={[styles.messageText, isSeller && styles.sellerMessageText]}
+          >
+            {item.message}
+          </Text>
+        </View>
+        <Text style={styles.messageTime}>
           {new Date(item.created_at).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -133,6 +194,7 @@ export const SellerChatScreen = ({ route, navigation }) => {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
+        <ActivityIndicator size="small" color={colors.primary} />
         <Text style={styles.loadingText}>Loading chat...</Text>
       </View>
     );
@@ -140,91 +202,86 @@ export const SellerChatScreen = ({ route, navigation }) => {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={[colors.primary, colors.accent]}
-        style={[styles.header, { paddingTop: insets.top }]}
-      >
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <View style={styles.headerContent}>
           <Pressable
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
+            <Ionicons name="arrow-back" size={24} color={colors.dark} />
           </Pressable>
           <View style={styles.headerInfo}>
             <View style={styles.userAvatar}>
-              <Ionicons name="person" size={20} color={colors.primary} />
+              {conversation.user?.avatar_url ? (
+                <Image source={{ uri: conversation.user.avatar_url }} style={styles.avatarImg} />
+              ) : (
+                <Ionicons name="person" size={20} color={colors.primary} />
+              )}
             </View>
             <View>
-              <Text style={styles.headerTitle}>Customer</Text>
-              <Text style={styles.headerSubtitle}>Online</Text>
+              <Text style={styles.headerTitle}>{userName}</Text>
+              <View style={styles.statusRow}>
+                <View style={styles.statusDot} />
+                <Text style={styles.headerSubtitle}>Customer</Text>
+              </View>
             </View>
           </View>
-          <View style={styles.headerActions}>
-            <Pressable style={styles.headerButton}>
-              <Ionicons name="call-outline" size={20} color="#fff" />
-            </Pressable>
-            <Pressable style={styles.headerButton}>
-              <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
-            </Pressable>
-          </View>
+          <Pressable style={styles.headerAction}>
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.muted} />
+          </Pressable>
         </View>
-      </LinearGradient>
+      </View>
 
       <KeyboardAvoidingView
         style={styles.chatContainer}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={insets.bottom}
+        keyboardVerticalOffset={0}
       >
         <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
-          contentContainerStyle={styles.messagesList}
+          contentContainerStyle={[
+            styles.messagesList,
+            { paddingBottom: 100 + insets.bottom }
+          ]}
           onContentSizeChange={() =>
             flatListRef.current?.scrollToEnd({ animated: true })
           }
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
+      </KeyboardAvoidingView>
 
-        <View
-          style={[styles.inputContainer, { paddingBottom: insets.bottom + 16 }]}
-        >
-          <View style={styles.inputWrapper}>
-            <Pressable style={styles.attachButton}>
-              <Ionicons
-                name="add-circle-outline"
-                size={24}
-                color={colors.muted}
-              />
-            </Pressable>
-            <TextInput
-              style={styles.textInput}
-              value={newMessage}
-              onChangeText={setNewMessage}
-              placeholder="Type a message..."
-              placeholderTextColor={colors.muted}
-              multiline
-              maxLength={500}
-            />
-            <Pressable style={styles.emojiButton}>
-              <Ionicons name="happy-outline" size={20} color={colors.muted} />
-            </Pressable>
-          </View>
+      <View
+        style={[
+          styles.inputContainer,
+          { paddingBottom: Math.max(insets.bottom, 16) }
+        ]}
+      >
+        <View style={styles.inputWrapper}>
+          <TextInput
+            style={styles.textInput}
+            value={newMessage}
+            onChangeText={setNewMessage}
+            placeholder="Type a message..."
+            placeholderTextColor={colors.muted}
+            multiline
+            maxLength={1000}
+          />
           <Pressable
-            style={[
-              styles.sendButton,
-              (!newMessage.trim() || sending) && styles.sendButtonDisabled,
-            ]}
+            style={[styles.sendButton, (!newMessage.trim() || sending) && styles.sendButtonDisabled]}
             onPress={sendMessage}
             disabled={!newMessage.trim() || sending}
           >
-            <Ionicons name="send" size={20} color="#fff" />
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </View>
   );
 };
@@ -235,49 +292,63 @@ const styles = StyleSheet.create({
     backgroundColor: colors.light,
   },
   header: {
+    backgroundColor: "#fff",
     paddingHorizontal: 16,
     paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   headerContent: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
   },
   backButton: {
     padding: 8,
+    marginRight: 8,
     borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: colors.light,
   },
   headerInfo: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    marginLeft: 12,
   },
   userAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#fff",
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: colors.light,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
+    overflow: 'hidden',
+  },
+  avatarImg: {
+    width: '100%',
+    height: '100%',
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#fff",
+    fontSize: 17,
+    fontWeight: "700",
+    color: colors.dark,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    color: colors.muted,
   },
-  headerActions: {
-    flexDirection: "row",
-  },
-  headerButton: {
+  headerAction: {
     padding: 8,
-    marginLeft: 8,
   },
   chatContainer: {
     flex: 1,
@@ -287,117 +358,97 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: colors.light,
+    gap: 8,
   },
   loadingText: {
     color: colors.muted,
-    fontSize: 16,
+    fontSize: 15,
   },
   messagesList: {
     padding: 16,
-    paddingBottom: 20,
+    paddingBottom: 32,
+  },
+  messageWrapper: {
+    marginBottom: 16,
+    maxWidth: "85%",
+  },
+  userWrapper: {
+    alignSelf: "flex-start",
+  },
+  sellerWrapper: {
+    alignSelf: "flex-end",
+    alignItems: 'flex-end',
   },
   messageContainer: {
-    maxWidth: "80%",
-    marginBottom: 12,
     padding: 12,
-    borderRadius: 16,
+    borderRadius: 20,
     shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
     shadowRadius: 2,
-    elevation: 2,
+    elevation: 1,
   },
   userMessage: {
-    alignSelf: "flex-start",
     backgroundColor: "#fff",
     borderBottomLeftRadius: 4,
   },
   sellerMessage: {
-    alignSelf: "flex-end",
     backgroundColor: colors.primary,
     borderBottomRightRadius: 4,
   },
   messageText: {
     fontSize: 16,
-    lineHeight: 20,
-    color: "#333",
+    lineHeight: 22,
+    color: colors.dark,
   },
   sellerMessageText: {
     color: "#fff",
   },
   messageTime: {
-    fontSize: 12,
-    color: "#666",
+    fontSize: 11,
+    color: colors.muted,
     marginTop: 4,
-    alignSelf: "flex-end",
-  },
-  sellerMessageTime: {
-    color: "rgba(255,255,255,0.7)",
+    marginHorizontal: 4,
   },
   inputContainer: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingHorizontal: 16,
-    paddingTop: 16,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#e1e1e1",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 8,
+    borderTopColor: "#f0f0f0",
   },
   inputWrapper: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "flex-end",
     backgroundColor: colors.light,
-    borderRadius: 24,
+    borderRadius: 25,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    marginRight: 12,
-  },
-  attachButton: {
-    marginRight: 8,
-    padding: 4,
+    gap: 8,
   },
   textInput: {
     flex: 1,
     fontSize: 16,
-    lineHeight: 20,
-    maxHeight: 100,
-    color: colors.text,
-  },
-  emojiButton: {
-    marginLeft: 8,
-    padding: 4,
+    maxHeight: 120,
+    paddingTop: 8,
+    paddingBottom: 8,
+    color: colors.dark,
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: colors.primary,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: colors.primary,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
   },
   sendButtonDisabled: {
-    backgroundColor: "#f1f1f1",
-    shadowOpacity: 0,
-    elevation: 0,
+    backgroundColor: colors.muted,
+    opacity: 0.5,
   },
 });
+

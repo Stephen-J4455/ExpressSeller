@@ -8,6 +8,8 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
+  TouchableOpacity,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSeller } from "../context/SellerContext";
@@ -23,46 +25,29 @@ const statusFilters = [
   "canceled",
 ];
 
-export const OrdersScreen = () => {
+export const OrdersScreen = ({ navigation }) => {
   const { orders, refresh, loading, advanceOrderStatus } = useSeller();
   const [filter, setFilter] = useState("processing");
   const [searchQuery, setSearchQuery] = useState("");
   const statusSummary = statusFilters.map((status) => ({
     status,
-    total: orders.filter((order) => {
-      if (status === "processing")
-        return ["processing", "packed"].includes(order.status);
-      if (status === "shipped")
-        return ["shipped", "delivered"].includes(order.status);
-      return order.status === status;
-    }).length,
+    total: orders.filter((order) => order.status === status).length,
   }));
 
   const filteredOrders = useMemo(() => {
     let filtered = orders;
 
-    // Apply status filter
-    if (filter === "processing") {
-      filtered = filtered.filter((order) =>
-        ["processing", "packed"].includes(order.status)
-      );
-    } else if (filter === "shipped") {
-      filtered = filtered.filter((order) =>
-        ["shipped", "delivered"].includes(order.status)
-      );
-    } else {
-      filtered = filtered.filter((order) => order.status === filter);
-    }
+    // Apply status filter - each filter shows only orders with that exact status
+    filtered = filtered.filter((order) => order.status === filter);
 
     // Apply search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       filtered = filtered.filter(
         (order) =>
-          order.id?.toLowerCase().includes(query) ||
-          order.customer_name?.toLowerCase().includes(query) ||
-          order.customer_email?.toLowerCase().includes(query) ||
-          order.items?.some((item) => item.title?.toLowerCase().includes(query))
+          order.order_number?.toLowerCase().includes(query) ||
+          order.customer?.name?.toLowerCase().includes(query) ||
+          order.customer?.email?.toLowerCase().includes(query)
       );
     }
 
@@ -78,12 +63,17 @@ export const OrdersScreen = () => {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ paddingBottom: 100 }}
+      contentContainerStyle={styles.contentContainer}
       refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={refresh} />
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={refresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
       }
     >
-      <SectionHeader title="Orders" subtitle="Manage fulfillment" />
+      <SectionHeader title="Store Orders" subtitle="Manage incoming fulfillment" />
 
       <ScrollView
         horizontal
@@ -107,7 +97,7 @@ export const OrdersScreen = () => {
         />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search orders..."
+          placeholder="Search by order # or customer..."
           value={searchQuery}
           onChangeText={setSearchQuery}
           placeholderTextColor={colors.muted}
@@ -145,27 +135,31 @@ export const OrdersScreen = () => {
         data={filteredOrders}
         keyExtractor={(item) => item.id}
         scrollEnabled={false}
-        contentContainerStyle={{ gap: 16, paddingBottom: 140 }}
+        contentContainerStyle={{ gap: 16 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>No orders in this lane.</Text>
+          <Text style={styles.empty}>No orders in this fulfillment lane.</Text>
         }
         renderItem={({ item }) => (
           <OrderCard
             order={item}
+            onPress={() => navigation.navigate('OrderDetail', { order: item })}
             footer={
               nextStatus[item.status] ? (
-                <Pressable
+                <TouchableOpacity
                   style={styles.progressButton}
                   onPress={() =>
                     advanceOrderStatus(item.id, nextStatus[item.status])
                   }
                 >
                   <Text style={styles.progressText}>
-                    Mark as {nextStatus[item.status]}
+                    Move to {nextStatus[item.status]}
                   </Text>
-                </Pressable>
+                </TouchableOpacity>
               ) : item.status === "delivered" ? (
-                <Text style={styles.success}>Delivered</Text>
+                <View style={styles.successBadge}>
+                  <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                  <Text style={styles.successText}>Delivered</Text>
+                </View>
               ) : null
             }
           />
@@ -178,98 +172,127 @@ export const OrdersScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.light,
-    padding: 16,
-    paddingTop: 50,
+    backgroundColor: "#F8FAFC",
+  },
+  contentContainer: {
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "ios" ? 60 : 40,
+    paddingBottom: 120,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 24,
+    paddingRight: 6,
+  },
+  summaryCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    minWidth: 120,
+    shadowColor: colors.dark,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  summaryLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  summaryValue: {
+    fontWeight: "900",
+    color: colors.dark,
+    fontSize: 20,
+    marginTop: 4,
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    shadowColor: colors.dark,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.dark,
+    fontSize: 15,
+    fontWeight: "500",
   },
   filters: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#E4E8F0",
+    borderColor: "#F1F5F9",
   },
   filterChipActive: {
     backgroundColor: colors.dark,
     borderColor: colors.dark,
   },
   filterText: {
-    color: colors.dark,
+    color: colors.muted,
     fontWeight: "600",
+    fontSize: 13,
   },
   filterTextActive: {
     color: "#fff",
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#D8DDE8",
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    color: colors.dark,
-    fontSize: 16,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 12,
-    paddingRight: 6,
-  },
-  summaryCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#E4E8F0",
-    minWidth: 110,
-  },
-  summaryLabel: {
-    color: colors.muted,
-    textTransform: "capitalize",
-  },
-  summaryValue: {
-    fontWeight: "800",
-    color: colors.dark,
-    fontSize: 18,
-    marginTop: 4,
+    fontWeight: "700",
   },
   empty: {
     color: colors.muted,
-    marginTop: 40,
+    fontSize: 15,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: 60,
   },
   progressButton: {
     marginTop: 18,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primaryLight,
     alignSelf: "flex-start",
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
   },
   progressText: {
-    color: "#fff",
+    color: colors.primary,
     fontWeight: "700",
+    fontSize: 13,
   },
-  success: {
+  successBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     marginTop: 18,
+  },
+  successText: {
     color: colors.success,
     fontWeight: "700",
+    fontSize: 13,
   },
 });
